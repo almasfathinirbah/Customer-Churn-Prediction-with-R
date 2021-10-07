@@ -1,0 +1,121 @@
+---
+title: "Customer Churn Prediction"
+author: "Almas Fathin Irbah"
+date: "9/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# clear-up the environment
+rm(list = ls())
+# chunk options
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  comment = "#>",
+  echo = TRUE
+)
+# scientific notation
+options(scipen = 9999)
+```
+
+```{r message=F, warning=F, echo=FALSE}
+library(tidyverse)
+library(rsample)
+library(MLmetrics)
+library(inspectdf)
+library(caret)
+library(ROCR)
+```
+```{r}
+customer <- read.csv("Telco-Customer-Churn.csv", stringsAsFactors = T)
+head(customer)
+```
+```{r}
+colSums(is.na(customer))
+```
+```{r}
+customer <- customer %>% 
+            select(-customerID) %>% 
+            na.omit() %>% 
+            mutate(SeniorCitizen = as.factor(SeniorCitizen)) 
+```
+```{r}
+customer %>% inspect_cat() %>% show_plot()
+```
+```{r}
+customer %>% inspect_num() %>% show_plot()
+```
+```{r}
+set.seed(100)
+idx <- initial_split(data = customer,
+                     prop = 0.8,
+                     strata = "Churn")
+data_train <- training(idx)
+data_test <- testing(idx)
+```
+```{r eval=FALSE}
+set.seed(100)
+ctrl <- trainControl(method = "repeatedcv",
+                     number = 5,
+                     repeats = 3)
+model_forest <- train(Churn ~ .,
+                      data = data_train,
+                      method = "rf",
+                      trControl = ctrl)
+saveRDS(model_forest, "model_forest.rds")
+```
+```{r}
+model_forest <- readRDS("model_forest.rds")
+model_forest
+```
+```{r}
+data_train_up <- upSample(x = data_train[, -20],
+                          y = data_train$Churn,
+                          yname = "Churn")
+# cek proporsi
+prop.table(table(data_train_up$Churn))
+```
+```{r eval=FALSE}
+set.seed(100)
+ctrl <- trainControl(method = "repeatedcv",
+                     number = 5,
+                     repeats = 3)
+model_forest_up <- train(Churn ~ .,
+                         data = data_train_up,
+                         method = "rf",
+                         trControl = ctrl)
+saveRDS(model_forest_up, "model_forest_up.rds")
+```
+```{r}
+model_forest_up <- readRDS("model_forest_up.rds")
+model_forest_up
+```
+```{r}
+pred <- predict(model_forest_up, newdata = data_test, type = "prob")
+pred$result <- as.factor(ifelse(pred$Yes > 0.45, "Yes", "No"))
+confusionMatrix(pred$result, data_test$Churn, positive = "Yes")
+```
+```{r}
+pred_prob <- predict(object = model_forest_up, newdata = data_test, type = "prob")
+pred <-  prediction(pred_prob[,2], labels = data_test$Churn)
+perf <- performance(prediction.obj = pred, measure = "tpr", x.measure = "fpr")
+plot(perf)
+```
+```{r}
+auc <- performance(pred, measure = "auc")
+auc@y.values[[1]]
+```
+```{r}
+library(lime)
+test_x <- data_test %>% 
+  dplyr::select(-Churn)
+explainer <- lime(test_x, model_forest_up)
+explanation <- lime::explain(test_x[1:2,],
+                             explainer, 
+                             labels = c("Yes"),
+                             n_features = 8)
+plot_features(explanation)
+```
+
